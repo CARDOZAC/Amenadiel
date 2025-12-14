@@ -508,3 +508,79 @@ export interface KPIDashboard {
     outstanding_principal: string;
   }[];
 }
+
+// ============================================================================
+// DATABASE TYPE FOR SUPABASE CLIENT
+// ============================================================================
+
+/**
+ * Supabase Database schema type
+ * Used by createClient<Database>()
+ */
+export interface Database {
+  public: {
+    Tables: {
+      users: {
+        Row: User;
+        Insert: InsertUser;
+        Update: Partial<InsertUser>;
+      };
+      routes: {
+        Row: Route;
+        Insert: InsertRoute;
+        Update: Partial<InsertRoute>;
+      };
+      clients: {
+        Row: Client;
+        Insert: InsertClient;
+        Update: Partial<InsertClient>;
+      };
+      loans: {
+        Row: Loan;
+        Insert: InsertLoan;
+        Update: Partial<InsertLoan>;
+      };
+      installments: {
+        Row: Installment;
+        Insert: InsertInstallment;
+        Update: Partial<InsertInstallment>;
+      };
+      daysheets: {
+        Row: Daysheet;
+        Insert: InsertDaysheet;
+        Update: Partial<InsertDaysheet>;
+      };
+      collection_events: {
+        Row: CollectionEvent;
+        Insert: InsertCollectionEvent;
+        Update: Partial<InsertCollectionEvent>;
+      };
+      expense_events: {
+        Row: ExpenseEvent;
+        Insert: InsertExpenseEvent;
+        Update: Partial<InsertExpenseEvent>;
+      };
+      ledger_transactions: {
+        Row: LedgerTransaction;
+        Insert: InsertLedgerTransaction;
+        Update: Partial<InsertLedgerTransaction>;
+      };
+      closings: {
+        Row: Closing;
+        Insert: InsertClosing;
+        Update: Partial<InsertClosing>;
+      };
+    };
+    Views: {};
+    Functions: {};
+    Enums: {
+      user_role: UserRole;
+      loan_status: LoanStatus;
+      daysheet_status: DaysheetStatus;
+      collection_event_type: CollectionEventType;
+      expense_type: ExpenseType;
+      ledger_entry_type: LedgerEntryType;
+      closing_status: ClosingStatus;
+    };
+  };
+}

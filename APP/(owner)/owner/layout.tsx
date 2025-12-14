@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoutButton } from "@/app/components/LogoutButton";
 
 export default function OwnerLayout({
   children,
@@ -9,13 +10,19 @@ export default function OwnerLayout({
     <div className="min-h-screen bg-gray-50">
       <header className="bg-purple-700 text-white p-4">
         <div className="container mx-auto">
-          <h1 className="text-2xl font-bold">PATRÓN - Dashboard Ejecutivo</h1>
-          <nav className="mt-2 flex gap-4 text-sm">
-            <Link href="/" className="hover:underline">
-              Inicio
-            </Link>
+          <div className="flex justify-between items-center mb-2">
+            <h1 className="text-2xl font-bold">PATRÓN - Dashboard Ejecutivo</h1>
+            <LogoutButton />
+          </div>
+          <nav className="flex gap-4 text-sm">
             <Link href="/owner" className="hover:underline">
-              KPIs y Rentabilidad
+              KPIs
+            </Link>
+            <Link href="/accounting" className="hover:underline opacity-75">
+              Ver Contador
+            </Link>
+            <Link href="/collector" className="hover:underline opacity-75">
+              Ver Cobrador
             </Link>
           </nav>
         </div>

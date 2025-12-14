@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoutButton } from "@/app/components/LogoutButton";
 
 export default function CollectorLayout({
   children,
@@ -9,11 +10,11 @@ export default function CollectorLayout({
     <div className="min-h-screen bg-gray-50">
       <header className="bg-blue-600 text-white p-4">
         <div className="container mx-auto">
-          <h1 className="text-2xl font-bold">COBRADOR - Captura de Pagos</h1>
-          <nav className="mt-2 flex gap-4 text-sm">
-            <Link href="/" className="hover:underline">
-              Inicio
-            </Link>
+          <div className="flex justify-between items-center mb-2">
+            <h1 className="text-2xl font-bold">COBRADOR - Captura de Pagos</h1>
+            <LogoutButton />
+          </div>
+          <nav className="flex gap-4 text-sm">
             <Link href="/collector" className="hover:underline">
               Registrar Pago
             </Link>
