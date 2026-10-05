@@ -111,7 +111,7 @@ export interface Client {
   address: string | null;
   location: GeoPoint | null;
   route_id: string | null;
-  references: PersonalReference[];
+  personal_references: PersonalReference[];
   risk_score: string; // NUMERIC(5,2) as string
   is_active: boolean;
   created_at: string;
@@ -131,7 +131,7 @@ export interface InsertClient {
   address?: string | null;
   location?: GeoPoint | null;
   route_id?: string | null;
-  references?: PersonalReference[];
+  personal_references?: PersonalReference[];
   risk_score?: string;
   is_active?: boolean;
 }

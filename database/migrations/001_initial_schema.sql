@@ -1,6 +1,7 @@
 -- ============================================================================
 -- SISTEMA DLE - ESQUEMA DE BASE DE DATOS
 -- Sistema de Gestión de Microcrédito Diario de Alto Rendimiento
+-- v1.1 - Optimizado
 -- ============================================================================
 -- Principio: APPEND-ONLY - El pasado no se edita, se corrige con nuevos movimientos
 -- Precisión: NUMERIC(18,6) para cálculos financieros críticos
@@ -80,7 +81,7 @@ CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 
     -- Autenticación (integración con Supabase Auth)
-    email TEXT UNIQUE NOT NULL,
+    email TEXT NOT NULL, -- La unicidad se maneja con el índice case-insensitive
     role user_role NOT NULL,
 
     -- Información personal
@@ -96,6 +97,7 @@ CREATE TABLE users (
 );
 
 -- Índices
+CREATE UNIQUE INDEX idx_users_email_case_insensitive ON users (lower(email));
 CREATE INDEX idx_users_role ON users(role);
 CREATE INDEX idx_users_active ON users(is_active) WHERE is_active = true;
 
@@ -126,6 +128,7 @@ CREATE TABLE routes (
 
 CREATE INDEX idx_routes_collector ON routes(collector_id);
 CREATE INDEX idx_routes_active ON routes(is_active) WHERE is_active = true;
+CREATE INDEX idx_routes_coverage_area ON routes USING GIST(coverage_area);
 
 -- ============================================================================
 -- TABLA: clients
@@ -147,7 +150,7 @@ CREATE TABLE clients (
     route_id UUID REFERENCES routes(id) ON DELETE SET NULL,
 
     -- Referencias personales (JSON para flexibilidad)
-    references JSONB DEFAULT '[]',
+    personal_references JSONB DEFAULT '[]',
 
     -- Score de riesgo (calculado por el sistema)
     risk_score NUMERIC(5,2) DEFAULT 0.00, -- 0-100
@@ -213,14 +216,15 @@ CREATE TABLE loans (
 
 -- Índices críticos para rendimiento del DLE
 CREATE INDEX idx_loans_client ON loans(client_id);
-CREATE INDEX idx_loans_collector ON loans(collector_id);
 CREATE INDEX idx_loans_status ON loans(status) WHERE status = 'active';
+CREATE INDEX idx_loans_active_collector ON loans(collector_id) WHERE status = 'active';
 CREATE INDEX idx_loans_overdue ON loans(days_overdue DESC) WHERE status = 'active';
 CREATE INDEX idx_loans_disbursement_date ON loans(disbursement_date);
 
 -- ============================================================================
 -- TABLA: installments (OPCIONAL - Plan de Cuotas Teórico)
--- Generado al crear el préstamo como referencia, pero NO se usa para contabilidad
+-- Generado al crear el préstamo como referencia, pero NO se usa para contabilidad.
+-- Su propósito es permitir análisis de "esperado vs. real".
 -- ============================================================================
 CREATE TABLE installments (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -237,9 +241,6 @@ CREATE TABLE installments (
     expected_principal NUMERIC(18,6) NOT NULL,
     expected_interest NUMERIC(18,6) NOT NULL,
     expected_total NUMERIC(18,6) NOT NULL,
-
-    -- NOTA: Los pagos REALES se registran en collection_events y se procesan por el DLE
-    -- Esta tabla es solo referencia para comparar "esperado vs real"
 
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -293,131 +294,9 @@ CREATE INDEX idx_daysheets_status ON daysheets(status);
 CREATE INDEX idx_daysheets_work_date ON daysheets(work_date DESC);
 
 -- ============================================================================
--- TABLA: collection_events
--- Eventos de pago (APPEND-ONLY, inmutable después de cierre)
--- ============================================================================
-CREATE TABLE collection_events (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-
-    -- Relaciones
-    loan_id UUID NOT NULL REFERENCES loans(id) ON DELETE RESTRICT,
-    collector_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    daysheet_id UUID REFERENCES daysheets(id) ON DELETE SET NULL,
-
-    -- Monto del pago
-    amount NUMERIC(18,6) NOT NULL CHECK (amount > 0),
-
-    -- Tipo de pago
-    event_type collection_event_type NOT NULL,
-
-    -- Geolocalización y timestamp (AUDITORÍA CRÍTICA - Anti-fraude)
-    location GEOGRAPHY(POINT, 4326) NOT NULL, -- GPS obligatorio
-    collected_at TIMESTAMPTZ NOT NULL,        -- Timestamp del cobro
-
-    -- Procesamiento por DLE (se llena cuando DLE procesa este evento)
-    processed_by_dle BOOLEAN DEFAULT false,
-    dle_closing_id UUID, -- Se llena al ejecutar el DLE
-    principal_applied NUMERIC(18,6),  -- Cuánto fue a capital
-    interest_applied NUMERIC(18,6),   -- Cuánto fue a intereses
-
-    -- Metadata
-    notes TEXT,
-    photo_url TEXT, -- URL de foto del recibo (opcional)
-
-    -- Auditoría
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-
-    -- Constraint: no editar después de procesado por DLE
-    -- (se maneja a nivel de aplicación con Server Actions)
-
-    CONSTRAINT chk_collection_amount_positive CHECK (amount > 0)
-);
-
--- Índices para rendimiento
-CREATE INDEX idx_collection_loan ON collection_events(loan_id, collected_at DESC);
-CREATE INDEX idx_collection_collector ON collection_events(collector_id, collected_at DESC);
-CREATE INDEX idx_collection_daysheet ON collection_events(daysheet_id);
-CREATE INDEX idx_collection_unprocessed ON collection_events(processed_by_dle, collected_at)
-    WHERE processed_by_dle = false;
-CREATE INDEX idx_collection_location ON collection_events USING GIST(location);
-
--- ============================================================================
--- TABLA: expense_events
--- Gastos del cobrador (APPEND-ONLY)
--- ============================================================================
-CREATE TABLE expense_events (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-
-    -- Relaciones
-    collector_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-    daysheet_id UUID REFERENCES daysheets(id) ON DELETE SET NULL,
-
-    -- Gasto
-    amount NUMERIC(18,6) NOT NULL CHECK (amount > 0),
-    expense_type expense_type NOT NULL,
-    description TEXT NOT NULL,
-
-    -- Comprobante
-    receipt_photo_url TEXT,
-
-    -- Timestamp
-    expense_date TIMESTAMPTZ NOT NULL,
-
-    -- Aprobación (opcional para gastos grandes)
-    approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
-    approved_at TIMESTAMPTZ,
-
-    -- Auditoría
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX idx_expense_collector ON expense_events(collector_id, expense_date DESC);
-CREATE INDEX idx_expense_daysheet ON expense_events(daysheet_id);
-
--- ============================================================================
--- TABLA: ledger_transactions
--- Libro mayor contable (APPEND-ONLY, inmutable, doble partida)
--- ============================================================================
-CREATE TABLE ledger_transactions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-
-    -- Relación con el cierre que generó esta transacción
-    closing_id UUID REFERENCES closings(id) ON DELETE RESTRICT,
-
-    -- Tipo de movimiento
-    entry_type ledger_entry_type NOT NULL,
-
-    -- Cuentas contables (simplificado, puede expandirse)
-    debit_account TEXT NOT NULL,  -- ej. "Cash", "Accounts Receivable"
-    credit_account TEXT NOT NULL, -- ej. "Interest Income", "Principal Receivable"
-
-    -- Monto (siempre positivo, el signo lo determina debit/credit)
-    amount NUMERIC(18,6) NOT NULL CHECK (amount > 0),
-
-    -- Referencias
-    loan_id UUID REFERENCES loans(id) ON DELETE SET NULL,
-    client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
-    collection_event_id UUID REFERENCES collection_events(id) ON DELETE SET NULL,
-
-    -- Descripción
-    description TEXT,
-
-    -- Fecha efectiva del movimiento
-    transaction_date DATE NOT NULL,
-
-    -- Auditoría (INMUTABLE)
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Índices
-CREATE INDEX idx_ledger_closing ON ledger_transactions(closing_id);
-CREATE INDEX idx_ledger_date ON ledger_transactions(transaction_date DESC);
-CREATE INDEX idx_ledger_loan ON ledger_transactions(loan_id);
-CREATE INDEX idx_ledger_type ON ledger_transactions(entry_type);
-
--- ============================================================================
 -- TABLA: closings
 -- Cierre diario consolidado (ejecuta el Motor DLE)
+-- **Definida antes de las tablas que la referencian**
 -- ============================================================================
 CREATE TABLE closings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -463,10 +342,131 @@ CREATE INDEX idx_closings_date ON closings(closing_date DESC);
 CREATE INDEX idx_closings_status ON closings(status);
 
 -- ============================================================================
+-- TABLA: collection_events
+-- Eventos de pago (APPEND-ONLY, inmutable después de cierre)
+-- ============================================================================
+CREATE TABLE collection_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+    -- Relaciones
+    loan_id UUID NOT NULL REFERENCES loans(id) ON DELETE RESTRICT,
+    collector_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    daysheet_id UUID REFERENCES daysheets(id) ON DELETE SET NULL,
+
+    -- Monto del pago
+    amount NUMERIC(18,6) NOT NULL CHECK (amount > 0),
+
+    -- Tipo de pago
+    event_type collection_event_type NOT NULL,
+
+    -- Geolocalización y timestamp (AUDITORÍA CRÍTICA - Anti-fraude)
+    location GEOGRAPHY(POINT, 4326) NOT NULL, -- GPS obligatorio
+    collected_at TIMESTAMPTZ NOT NULL,        -- Timestamp del cobro
+
+    -- Procesamiento por DLE (se llena cuando DLE procesa este evento)
+    processed_by_dle BOOLEAN DEFAULT false,
+    dle_closing_id UUID REFERENCES closings(id) ON DELETE SET NULL, -- VINCULADO AL CIERRE
+    principal_applied NUMERIC(18,6),  -- Cuánto fue a capital
+    interest_applied NUMERIC(18,6),   -- Cuánto fue a intereses
+
+    -- Metadata
+    notes TEXT,
+    photo_url TEXT, -- URL de foto del recibo (opcional)
+
+    -- Auditoría
+    created_at TIMESTAMPTZ DEFAULT NOW()
+    -- Constraint de no editar después de procesado se maneja a nivel de aplicación
+);
+
+-- Índices para rendimiento
+CREATE INDEX idx_collection_loan ON collection_events(loan_id, collected_at DESC);
+CREATE INDEX idx_collection_collector ON collection_events(collector_id, collected_at DESC);
+CREATE INDEX idx_collection_daysheet ON collection_events(daysheet_id);
+CREATE INDEX idx_collection_unprocessed ON collection_events(processed_by_dle, collected_at)
+    WHERE processed_by_dle = false;
+CREATE INDEX idx_collection_location ON collection_events USING GIST(location);
+CREATE INDEX idx_collection_closing ON collection_events(dle_closing_id);
+
+-- ============================================================================
+-- TABLA: expense_events
+-- Gastos del cobrador (APPEND-ONLY)
+-- ============================================================================
+CREATE TABLE expense_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+    -- Relaciones
+    collector_id UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+    daysheet_id UUID REFERENCES daysheets(id) ON DELETE SET NULL,
+
+    -- Gasto
+    amount NUMERIC(18,6) NOT NULL CHECK (amount > 0),
+    expense_type expense_type NOT NULL,
+    description TEXT NOT NULL,
+
+    -- Comprobante
+    receipt_photo_url TEXT,
+
+    -- Timestamp
+    expense_date TIMESTAMPTZ NOT NULL,
+
+    -- Aprobación (opcional para gastos grandes)
+    approved_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    approved_at TIMESTAMPTZ,
+
+    -- Auditoría
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_expense_collector ON expense_events(collector_id, expense_date DESC);
+CREATE INDEX idx_expense_daysheet ON expense_events(daysheet_id);
+
+-- ============================================================================
+-- TABLA: ledger_transactions
+-- Libro mayor contable (APPEND-ONLY, inmutable, doble partida)
+-- ============================================================================
+CREATE TABLE ledger_transactions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+    -- Relación con el cierre que generó esta transacción
+    closing_id UUID NOT NULL REFERENCES closings(id) ON DELETE RESTRICT,
+
+    -- Tipo de movimiento
+    entry_type ledger_entry_type NOT NULL,
+
+    -- Cuentas contables (simplificado, puede expandirse)
+    debit_account TEXT NOT NULL,  -- ej. "Cash", "Accounts Receivable"
+    credit_account TEXT NOT NULL, -- ej. "Interest Income", "Principal Receivable"
+
+    -- Monto (siempre positivo, el signo lo determina debit/credit)
+    amount NUMERIC(18,6) NOT NULL CHECK (amount > 0),
+
+    -- Referencias
+    loan_id UUID REFERENCES loans(id) ON DELETE SET NULL,
+    client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
+    collection_event_id UUID REFERENCES collection_events(id) ON DELETE SET NULL,
+
+    -- Descripción
+    description TEXT,
+
+    -- Fecha efectiva del movimiento
+    transaction_date DATE NOT NULL,
+
+    -- Auditoría (INMUTABLE)
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Índices
+CREATE INDEX idx_ledger_closing ON ledger_transactions(closing_id);
+CREATE INDEX idx_ledger_date ON ledger_transactions(transaction_date DESC);
+CREATE INDEX idx_ledger_loan ON ledger_transactions(loan_id);
+CREATE INDEX idx_ledger_type ON ledger_transactions(entry_type);
+
+
+-- ============================================================================
 -- TRIGGERS
 -- ============================================================================
 
--- Trigger: Actualizar updated_at automáticamente
+-- Trigger: Actualizar el campo 'updated_at' automáticamente en cada UPDATE
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -475,28 +475,19 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_routes_updated_at BEFORE UPDATE ON routes
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_clients_updated_at BEFORE UPDATE ON clients
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_loans_updated_at BEFORE UPDATE ON loans
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_daysheets_updated_at BEFORE UPDATE ON daysheets
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_closings_updated_at BEFORE UPDATE ON closings
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- Aplicar el trigger a las tablas relevantes
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_routes_updated_at BEFORE UPDATE ON routes FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_clients_updated_at BEFORE UPDATE ON clients FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_loans_updated_at BEFORE UPDATE ON loans FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_daysheets_updated_at BEFORE UPDATE ON daysheets FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_closings_updated_at BEFORE UPDATE ON closings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================================
 -- COMENTARIOS FINALES
 -- ============================================================================
 
+COMMENT ON FUNCTION update_updated_at_column IS 'Función de trigger que actualiza automáticamente la columna updated_at al valor de NOW() en cualquier fila que sea modificada.';
 COMMENT ON TABLE users IS 'Usuarios del sistema: Patrón, Contador, Cobradores';
 COMMENT ON TABLE routes IS 'Rutas de cobro asignadas a cobradores';
 COMMENT ON TABLE clients IS 'Clientes del microcrédito con scoring de riesgo';

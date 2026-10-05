@@ -1,27 +1,85 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* Escala de Blancos y Azules con acentos Carmesí */
+    --white-pure: #FFFFFF;
+    --white-soft: #F8FAFB;
+    --white-blue: #F1F5F9;
+    --slate-100: #E2E8F0;
+    --slate-200: #CBD5E1;
+
+    /* Azules Principales */
+    --blue-50: #EFF6FF;
+    --blue-100: #DBEAFE;
+    --blue-300: #93C5FD;
+    --blue-500: #3B82F6;
+    --blue-600: #2563EB;
+    --blue-700: #1D4ED8;
+    --blue-900: #1E3A8A;
+    --blue-950: #0F172A;
+
+    /* Acentos Carmesí */
+    --crimson-50: #FFF1F2;
+    --crimson-100: #FFE4E6;
+    --crimson-400: #FB7185;
+    --crimson-500: #F43F5E;
+    --crimson-600: #E11D48;
+    --crimson-700: #BE123C;
+
+    /* Variables semánticas primarias */
+    --background: var(--white-blue); /* #F1F5F9 */
+    --foreground: var(--blue-950);   /* #0F172A */
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
   }
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  /* Componente reutilizable para el efecto Glassmorphism */
+  .glass-card {
+    @apply bg-white/70 backdrop-blur-lg border border-white/20 rounded-2xl;
+    box-shadow: theme('boxShadow.glass');
+  }
+
+  /* Efecto de shimmer para skeletons */
+  .shimmer-bg {
+    @apply relative overflow-hidden bg-slate-100;
+  }
+  .shimmer-bg::after {
+    @apply content-[''] absolute inset-0 transform -translate-x-full bg-gradient-to-r from-transparent via-white-soft/50 to-transparent animate-shimmer;
+  }
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+
+  /* Animación de contador (requiere JS para cambiar el valor de --value) */
+  .anim-counter {
+    counter-reset: num var(--value);
+    animation: counter 1s ease-out;
+    animation-fill-mode: forwards;
+  }
+  
+  @property --num {
+    syntax: "<integer>";
+    initial-value: 0;
+    inherits: false;
+  }
+
+  @keyframes counter {
+    from { --num: 0; }
+    to { --num: var(--value); }
+  }
+  
+  .anim-counter::after {
+    content: counter(num);
   }
 }

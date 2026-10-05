@@ -38,10 +38,11 @@ export async function login(formData: FormData) {
   }
 
   // Obtener el rol del usuario desde public.users
+  type RoleRow = { role: 'owner' | 'accountant' | 'collector' };
   const { data: userData, error: userError } = await supabase
     .from('users')
     .select('role')
-    .eq('id', data.user.id)
+    .eq('id', data.user?.id)
     .single();
 
   if (userError || !userData) {
@@ -53,15 +54,15 @@ export async function login(formData: FormData) {
   }
 
   // Redirigir según el rol
-  const role = userData.role as 'owner' | 'accountant' | 'collector';
+  const role = (userData as RoleRow).role as 'owner' | 'accountant' | 'collector';
 
   switch (role) {
     case 'owner':
-      redirect('/owner');
+      return redirect('/owner');
     case 'accountant':
-      redirect('/accounting');
+      return redirect('/accounting');
     case 'collector':
-      redirect('/collector');
+      return redirect('/collector');
     default:
       return {
         error: 'Rol de usuario no válido',
@@ -93,6 +94,12 @@ export async function getCurrentUser() {
   }
 
   // Obtener datos completos del usuario desde public.users
+  type UserRow = {
+    role?: 'owner' | 'accountant' | 'collector';
+    full_name?: string | null;
+    phone?: string | null;
+  };
+
   const { data: userData, error } = await supabase
     .from('users')
     .select('*')
@@ -103,10 +110,12 @@ export async function getCurrentUser() {
     return null;
   }
 
+  const typedUser = userData as UserRow;
+
   return {
     ...user,
-    role: userData.role,
-    full_name: userData.full_name,
-    phone: userData.phone,
+    role: typedUser.role,
+    full_name: typedUser.full_name,
+    phone: typedUser.phone,
   };
 }
